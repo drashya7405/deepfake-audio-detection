@@ -1,0 +1,260 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_score, recall_score, f1_score
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Input, Dense, LSTM, SimpleRNN, Bidirectional, Conv1D, MaxPooling1D, Dropout, BatchNormalization, Flatten
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+
+# ADD THIS LINE TO FIX THE ERROR
+tf.config.run_functions_eagerly(True)
+
+# --- REVISED OPTIMIZER ---
+# Function to create a new optimizer instance for each model
+def create_optimizer():
+    """
+    Creates a new instance of the AdamW optimizer.
+    This prevents the "Unknown variable" error from reusing the same optimizer.
+    """
+    try:
+        from tensorflow.keras.optimizers import AdamW
+        # Using AdamW (available in TF 2.15+)
+        print("Creating new tf.keras.optimizers.AdamW instance.")
+        return AdamW(learning_rate=1e-3, weight_decay=1e-5, clipnorm=1.0)
+    except ImportError:
+        # Fallback if somehow using an older TF version
+        print("Built-in AdamW not found. Creating standard Adam optimizer instance.")
+        return tf.keras.optimizers.Adam(learning_rate=1e-3, clipnorm=1.0)
+
+# --- 1. Data Loading and Preprocessing ---
+
+print("Starting the deepfake audio detection training script...")
+print("Current time in India:", pd.Timestamp.now(tz='Asia/Kolkata').strftime('%A, %B %d, %Y at %I:%M %p %Z'))
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BEST_MODELS_DIR = os.path.join(PROJECT_ROOT, 'BestModels')
+os.makedirs(BEST_MODELS_DIR, exist_ok=True)
+
+# Load the dataset from the CSV file
+try:
+    df = pd.read_csv('/content/drive/MyDrive/SoftComputing/DATASET-balanced.csv')
+    print("\nDataset 'DATASET-balanced.csv' loaded successfully.")
+except FileNotFoundError:
+    print("\nError: 'DATASET-balanced.csv' not found. Please ensure the dataset file is in the same directory as the script.")
+    exit()
+
+# Display basic information about the dataset
+print("\n--- Data Preprocessing ---")
+print("Data Head:")
+print(df.head())
+
+# Separate features (X) from the target label (y)
+X = df.drop('LABEL', axis=1)
+y = df['LABEL']
+
+# Encode the categorical labels ('FAKE', 'REAL') into numerical format (0, 1)
+label_encoder = LabelEncoder()
+y_encoded = label_encoder.fit_transform(y)
+print(f"\nLabels encoded. Classes found: {label_encoder.classes_}")
+
+# Normalize the feature data
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+print("Features have been scaled using StandardScaler.")
+
+# --- CRITICAL CHANGE: DATA RESHAPING ---
+# New shape: (num_samples, num_features, 1). This allows Conv1D and RNNs to treat the features as a sequence.
+X_reshaped = np.reshape(X_scaled, (X_scaled.shape[0], X_scaled.shape[1], 1))
+
+# Split the dataset into training (70%), validation (15%), and testing (15%) sets
+X_train, X_temp, y_train, y_temp = train_test_split(X_reshaped, y_encoded, test_size=0.3, random_state=42, stratify=y_encoded)
+X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp)
+
+print("\nDataset has been split into training, validation, and testing sets.")
+print("Data Shapes:")
+print(f"Training data shape:   {X_train.shape}")
+print(f"Validation data shape: {X_val.shape}")
+print(f"Testing data shape:    {X_test.shape}")
+
+
+# --- 2. Utility Functions for Plotting and Evaluation ---
+
+def plot_history(history, model_name):
+    # Same as original
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    ax1.plot(history.history['accuracy'], label='Train Accuracy')
+    ax1.plot(history.history['val_accuracy'], label='Validation Accuracy')
+    ax1.set_title(f'{model_name} Model Accuracy')
+    ax1.set_ylabel('Accuracy')
+    ax1.set_xlabel('Epoch')
+    ax1.legend(loc='lower right')
+    ax1.grid(True)
+    ax2.plot(history.history['loss'], label='Train Loss')
+    ax2.plot(history.history['val_loss'], label='Validation Loss')
+    ax2.set_title(f'{model_name} Model Loss')
+    ax2.set_ylabel('Loss')
+    ax2.set_xlabel('Epoch')
+    ax2.legend(loc='upper right')
+    ax2.grid(True)
+    plt.tight_layout()
+    plt.savefig(f'{model_name}_training_history.png')
+    print(f"\nSaved training history plot to '{model_name}_training_history.png'")
+    plt.close()
+
+
+def evaluate_model(model, X_test, y_test, model_name):
+    # Same as original
+    y_pred_probs = model.predict(X_test)
+    y_pred = (y_pred_probs > 0.5).astype("int32")
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
+    print(f"\n--- {model_name} Evaluation on Test Set ---")
+    print(f"Accuracy:  {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall:    {recall:.4f}")
+    print(f"F1-score:  {f1:.4f}")
+    print("\nClassification Report:")
+    print(classification_report(y_test, y_pred, target_names=label_encoder.classes_))
+    cm = confusion_matrix(y_test, y_pred)
+    plt.figure(figsize=(7, 5))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_,
+                yticklabels=label_encoder.classes_, annot_kws={"size": 14})
+    plt.title(f'{model_name} Confusion Matrix', fontsize=16)
+    plt.ylabel('Actual Label', fontsize=12)
+    plt.xlabel('Predicted Label', fontsize=12)
+    plt.savefig(f'{model_name}_confusion_matrix.png')
+    print(f"Saved confusion matrix plot to '{model_name}_confusion_matrix.png'")
+    plt.close()
+    return {'model': model_name, 'accuracy': accuracy, 'precision': precision, 'recall': recall, 'f1_score': f1}
+
+
+# --- 3. Model Implementation, Training, and Evaluation ---
+
+results_list = []
+# Define callbacks for training
+early_stopping = EarlyStopping(monitor='val_loss', patience=10, verbose=1, restore_best_weights=True)
+lr_scheduler = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-6, verbose=1)
+
+# --- Model 1: Convolutional Neural Network (CNN) ---
+print("\n\n--- Building Model 1: 1D CNN ---")
+cnn_model = Sequential([
+    Input(shape=(X_train.shape[1], X_train.shape[2])),
+    Conv1D(filters=64, kernel_size=3, activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPooling1D(pool_size=2),
+    Conv1D(filters=128, kernel_size=3, activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPooling1D(pool_size=2),
+    Flatten(), # Flatten the sequence before passing to Dense layers
+    Dense(64, activation='relu'),
+    Dropout(0.3),
+    Dense(1, activation='sigmoid')
+])
+cnn_model.compile(optimizer=create_optimizer(), loss='binary_crossentropy', metrics=['accuracy'])
+cnn_model.summary()
+print("\n--- Training CNN Model ---")
+cnn_history = cnn_model.fit(X_train, y_train, epochs=5, batch_size=32, validation_data=(X_val, y_val),
+                            callbacks=[early_stopping, lr_scheduler], verbose=1)
+results_list.append(evaluate_model(cnn_model, X_test, y_test, 'CNN'))
+plot_history(cnn_history, 'CNN')
+
+
+# --- Model 2: Simple Recurrent Neural Network (RNN) ---
+print("\n\n--- Building Model 2: Simple RNN ---")
+rnn_model = Sequential([
+    Input(shape=(X_train.shape[1], X_train.shape[2])),
+    SimpleRNN(64, return_sequences=True),
+    SimpleRNN(32),
+    Dense(32, activation='relu'),
+    Dropout(0.3),
+    Dense(1, activation='sigmoid')
+])
+rnn_model.compile(optimizer=create_optimizer(), loss='binary_crossentropy', metrics=['accuracy'])
+rnn_model.summary()
+print("\n--- Training Simple RNN Model ---")
+rnn_history = rnn_model.fit(X_train, y_train, epochs=5, batch_size=32, validation_data=(X_val, y_val),
+                            callbacks=[early_stopping, lr_scheduler], verbose=1)
+results_list.append(evaluate_model(rnn_model, X_test, y_test, 'RNN'))
+plot_history(rnn_history, 'RNN')
+
+
+# --- Model 3: Hybrid CNN + BiLSTM ---
+print("\n\n--- Building Model 3: Hybrid CNN + BiLSTM ---")
+cnn_bilstm_model = Sequential([
+    Input(shape=(X_train.shape[1], X_train.shape[2])),
+    # Feature extraction with CNN
+    Conv1D(filters=64, kernel_size=3, activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPooling1D(pool_size=2),
+    Dropout(0.2),
+    Conv1D(filters=128, kernel_size=3, activation='relu', padding='same'),
+    BatchNormalization(),
+    MaxPooling1D(pool_size=2),
+    Dropout(0.2),
+    # Sequence modeling with BiLSTM
+    Bidirectional(LSTM(64)),
+    Dense(64, activation='relu'),
+    Dropout(0.3),
+    Dense(1, activation='sigmoid')
+])
+cnn_bilstm_model.compile(optimizer=create_optimizer(), loss='binary_crossentropy', metrics=['accuracy'])
+cnn_bilstm_model.summary()
+print("\n--- Training Hybrid CNN + BiLSTM Model ---")
+cnn_bilstm_history = cnn_bilstm_model.fit(X_train, y_train, epochs=5, batch_size=32, validation_data=(X_val, y_val),
+                                          callbacks=[early_stopping, lr_scheduler], verbose=1)
+results_list.append(evaluate_model(cnn_bilstm_model, X_test, y_test, 'CNN-BiLSTM'))
+plot_history(cnn_bilstm_history, 'CNN_BiLSTM')
+
+
+# --- 4. Final Performance Comparison ---
+
+# Create a dictionary to hold the trained model objects
+models_dict = {
+    'CNN': cnn_model,
+    'RNN': rnn_model,
+    'CNN-BiLSTM': cnn_bilstm_model
+}
+
+results_df = pd.DataFrame(results_list)
+print("\n\n--- Final Model Performance Comparison ---")
+print(results_df.to_string())
+results_df.to_csv('model_performance_comparison.csv', index=False)
+print("\nSaved final model performance comparison to 'model_performance_comparison.csv'")
+
+
+# --- ADDED CODE TO SAVE THE BEST MODEL ---
+
+try:
+    # Find the best model based on the 'accuracy' column
+    best_model_index = results_df['accuracy'].idxmax()
+    best_model_stats = results_df.loc[best_model_index]
+    best_model_name = best_model_stats['model']
+    best_model_accuracy = best_model_stats['accuracy']
+
+    # Get the actual model object from the dictionary
+    best_model_object = models_dict[best_model_name]
+
+    # Define the save path
+    save_path = os.path.join(BEST_MODELS_DIR, '/content/drive/MyDrive/SoftComputing/BestModels/devesh_best_deepfake_audio_model.h5')
+
+    # Save the model
+    best_model_object.save(save_path)
+
+    print(f"\n--- Best Model Saved ---")
+    print(f"The best performing model was '{best_model_name}' with {best_model_accuracy:.4f} accuracy.")
+    print(f"Model has been successfully saved to '{save_path}'")
+
+except Exception as e:
+    print(f"\nAn error occurred while saving the best model: {e}")
+
+# --- END OF ADDED CODE ---
+
+
+print("\nScript finished successfully.")
