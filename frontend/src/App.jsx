@@ -10,7 +10,7 @@ import ArchitectureModal from './components/ArchitectureModal';
 import Footer from './components/Footer';
 import { AlertCircle } from 'lucide-react';
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+import { fetchSamplesList, getSampleAudioStreamUrl, submitPrediction } from './config/api';
 
 export default function App() {
   const [audioFile, setAudioFile] = useState(null);
@@ -31,13 +31,10 @@ export default function App() {
 
   const fetchSamples = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/samples`);
-      if (res.ok) {
-        const data = await res.json();
-        setSamples(data.samples || []);
-      }
+      const data = await fetchSamplesList();
+      setSamples(data.samples || []);
     } catch (err) {
-      console.warn("Could not fetch samples:", err);
+      console.warn("Could not fetch samples:", err.message);
     }
   };
 
@@ -68,7 +65,7 @@ export default function App() {
     setSelectedSampleId(sample.id);
     setAudioFile(null);
     setAudioName(sample.name);
-    setAudioUrl(`${API_BASE}/api/sample-audio/${sample.id}`);
+    setAudioUrl(getSampleAudioStreamUrl(sample.id));
   };
 
   const handleAnalyzeSample = async (sample) => {
@@ -78,33 +75,17 @@ export default function App() {
 
   // Inference Execution
   const triggerInference = async (fileObj, sampleId, fileName) => {
+    if (isAnalyzing) return; // Prevent duplicate requests
     setIsAnalyzing(true);
     setError(null);
     setPredictionResult(null);
 
     try {
-      const formData = new FormData();
-      if (fileObj) {
-        formData.append('file', fileObj);
-      } else if (sampleId) {
-        formData.append('sample_id', sampleId);
-      }
-
-      const res = await fetch(`${API_BASE}/api/predict`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.detail || `Prediction request failed (HTTP ${res.status})`);
-      }
-
-      const data = await res.json();
+      const data = await submitPrediction(fileObj, sampleId);
       setPredictionResult(data);
     } catch (err) {
       console.error("Analysis error:", err);
-      setError(err.message || "Failed to analyze audio sample. Please check the backend connection.");
+      setError(err.message || "Failed to analyze audio. Please check the backend connection.");
     } finally {
       setIsAnalyzing(false);
     }

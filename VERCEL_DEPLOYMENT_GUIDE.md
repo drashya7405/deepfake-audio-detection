@@ -1,141 +1,92 @@
-# 🚀 Complete Deployment Guide: Deepfake Audio Detection (100% Free)
+# 🚀 Deployment Guide: Deepfake Audio Detection (Native Python + Vercel)
 
-This guide shows you how to deploy the project **100% free with NO paid plans, NO Docker fees, and NO commercial licenses needed**.
+This guide provides end-to-end instructions for deploying the project to production **without Docker** using a decoupled architecture:
+- **Frontend**: Hosted on **Vercel** (Global Edge CDN, instant loading).
+- **Backend**: Hosted on **Render.com** (Native Python Web Service) or **Hugging Face Spaces** (Free 16 GB RAM CPU tier).
 
 ---
 
 ## 🏗️ Architecture
 
-- **Frontend**: Hosted on **Vercel** (Free global CDN).
-- **Backend (ML Engine)**: Hosted on **Hugging Face Spaces** (Free 16 GB RAM CPU tier) or **Render.com** (Free tier).
-
----
-
-## 🏆 Option 2: Deploying to Hugging Face Spaces (100% Free, No Docker)
-
-Hugging Face Spaces offers a **permanent Free Tier (2 vCPUs · 16 GB RAM)** that runs Python natively without needing Docker or credit cards.
-
----
-
-### Step 1: Create a Free Hugging Face Space
-
-1. Go to [huggingface.co](https://huggingface.co) and sign in (create a free account if you don't have one).
-2. Click **New Space** (or visit [huggingface.co/new-space](https://huggingface.co/new-space)).
-3. Fill in the fields:
-   - **Space name**: `deepfake-audio-detector-api`
-   - **License**: Select **`mit`** or **`openrail`** from the dropdown.
-     *(Note: This is just an open-source tag for your public code. It is 100% free and does NOT require you to own or buy a license).*
-   - **Select the Space SDK**: Choose **Gradio** (This runs standard Python without Docker for free!).
-   - **Space hardware**: Select **CPU basic · 2 vCPU · 16 GB RAM · Free**.
-   - **Space visibility**: Select **Public** (so your Vercel frontend can call the API).
-4. Click **Create Space**.
-
----
-
-### Step 2: Upload Project Files to Hugging Face
-
-You can upload the files using either **Git CLI** (Method A) or directly via **Web Browser** (Method B).
-
-#### Method A: Via Git CLI (Fastest)
-
-Run these commands in your computer's terminal:
-
-```bash
-# 1. Clone your empty Hugging Face Space
-git clone https://huggingface.co/spaces/<YOUR-HF-USERNAME>/deepfake-audio-detector-api hf-space
-
-# 2. Copy the project files into the cloned folder
-cp app.py hf-space/
-cp requirements.txt hf-space/
-cp packages.txt hf-space/
-cp DATASET-balanced.csv hf-space/
-cp gehra_hua.mp3 hf-space/
-cp -r backend/ hf-space/backend/
-cp -r BestModels/ hf-space/BestModels/
-cp -r FAKE_AUDIOS/ hf-space/FAKE_AUDIOS/
-
-# 3. Enter the folder, commit, and push
-cd hf-space
-git add .
-git commit -m "Deploy deepfake detection ML backend"
-git push
+```text
+┌────────────────────────────────────────────────────────┐
+│               🌐 Vercel (Global Edge CDN)              │
+│  React + Vite + Tailwind CSS + Web Audio Visualizers  │
+└───────────────────────────┬────────────────────────────┘
+                            │
+               HTTPS / CORS REST API
+                            │
+┌───────────────────────────▼────────────────────────────┐
+│      🐍 Native Python ML Backend (Render / HF)         │
+│  FastAPI + TensorFlow + Librosa + 3 Best Models        │
+│  (Drashya CNN-RNN, Devesh CNN, Swayam Transformer)    │
+└────────────────────────────────────────────────────────┘
 ```
 
-*(When prompted for password, enter your Hugging Face Access Token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)).*
+---
+
+## ⚡ Option 1: Backend on Render.com (100% Free)
+
+1. Sign up at [render.com](https://render.com).
+2. Click **New +** $\rightarrow$ **Web Service**.
+3. Connect your GitHub repository: `drashya7405/deepfake-audio-detection`.
+4. Configure service settings:
+   - **Name**: `deepfake-audio-api`
+   - **Environment**: `Python`
+   - **Region**: Oregon or Frankfurt
+   - **Branch**: `main`
+   - **Build Command**:
+     ```bash
+     pip install -r backend/requirements.txt
+     ```
+   - **Start Command**:
+     ```bash
+     uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+     ```
+5. **Environment Variables**:
+   - `FRONTEND_URL`: `https://your-vercel-app.vercel.app` (Add after deploying frontend)
+   - `LOG_LEVEL`: `INFO`
+   - `MAX_UPLOAD_MB`: `25`
+   - `MAX_AUDIO_DURATION_SECONDS`: `60`
+   - `RATE_LIMIT_PER_MINUTE`: `15`
+6. Click **Create Web Service**.
+7. Copy your live Render URL: `https://deepfake-audio-api.onrender.com`.
 
 ---
 
-#### Method B: Via Browser Upload
+## ⚡ Option 2: Backend on Hugging Face Spaces (16 GB RAM Free Tier)
 
-1. Open your Hugging Face Space in your browser.
-2. Click the **Files** tab $\rightarrow$ **Add file** $\rightarrow$ **Upload files**.
-3. Drag & drop the following files into the browser:
-   - `app.py`
-   - `requirements.txt`
-   - `packages.txt`
-   - `DATASET-balanced.csv`
-   - `gehra_hua.mp3`
-   - The folders `backend/`, `BestModels/`, `FAKE_AUDIOS/`
-4. Click **Commit changes to main**.
-
----
-
-### Step 3: Verify Your Backend API
-
-1. Hugging Face will automatically install the requirements and launch the FastAPI server.
-2. Wait until the top status badge turns from **Building** $\rightarrow$ **Running** (green).
-3. **Your direct API URL** will be:
-   ```text
-   https://<YOUR-HF-USERNAME>-deepfake-audio-detector-api.hf.space
+1. Go to [huggingface.co/new-space](https://huggingface.co/new-space).
+2. Configure settings:
+   - **Space name**: `deepfake-audio-detector-api`
+   - **License**: Select `mit` or `none` (open-source label, free)
+   - **Space SDK**: Select **Gradio** (Runs standard Python natively)
+   - **Space hardware**: `CPU basic · 2 vCPU · 16 GB RAM · Free`
+   - **Visibility**: **Public**
+3. Push your repository to Hugging Face Spaces:
+   ```bash
+   git remote add hf https://huggingface.co/spaces/<YOUR-USERNAME>/deepfake-audio-detector-api
+   git push hf main
    ```
-4. Test it in your browser:
-   - `https://<YOUR-HF-USERNAME>-deepfake-audio-detector-api.hf.space/docs` (Interactive Swagger Docs)
-   - `https://<YOUR-HF-USERNAME>-deepfake-audio-detector-api.hf.space/api/health` (Health Check)
+4. Copy your direct Space URL:
+   ```text
+   https://<YOUR-USERNAME>-deepfake-audio-detector-api.hf.space
+   ```
 
 ---
 
-### Step 4: Deploy the Frontend to Vercel
+## 🌐 Deploy Frontend to Vercel
 
-1. Push your project code to **GitHub**.
-2. Go to **[vercel.com](https://vercel.com)** $\rightarrow$ click **Add New...** $\rightarrow$ **Project**.
-3. Import your GitHub repository.
-4. Configure settings:
+1. Log in to [vercel.com](https://vercel.com).
+2. Click **Add New...** $\rightarrow$ **Project**.
+3. Import your GitHub repository: `drashya7405/deepfake-audio-detection`.
+4. Configure project settings:
    - **Framework Preset**: `Vite`
-   - **Root Directory**: Click `Edit` and select `frontend` (or keep root).
+   - **Root Directory**: `frontend`
    - **Build Command**: `npm run build`
    - **Output Directory**: `dist`
-5. **Environment Variable**:
+5. **Environment Variables**:
    - **Key**: `VITE_API_URL`
-   - **Value**: `https://<YOUR-HF-USERNAME>-deepfake-audio-detector-api.hf.space`
-     *(Ensure there is NO trailing slash `/` at the end)*
-6. Click **Deploy**. Your frontend will be live on Vercel!
+   - **Value**: `https://deepfake-audio-api.onrender.com` (or your Hugging Face Space URL, with no trailing slash).
+6. Click **Deploy**.
 
----
-
-## ⚡ Option 1: Deploying Backend to Render.com (100% Free, 1-Click)
-
-If you prefer using [Render.com](https://render.com) (no Hugging Face account needed):
-
-1. Go to [render.com](https://render.com) and create a free account.
-2. Click **New +** $\rightarrow$ **Web Service**.
-3. Connect your GitHub repository.
-4. Settings:
-   - **Name**: `deepfake-audio-api`
-   - **Language**: `Python`
-   - **Branch**: `main`
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `python app.py`
-5. Click **Create Web Service** (Free).
-6. Copy your Render URL: `https://deepfake-audio-api.onrender.com`.
-7. In Vercel, set `VITE_API_URL` = `https://deepfake-audio-api.onrender.com` and deploy!
-
----
-
-## 💻 Running Locally
-
-```bash
-# Start both Backend and Frontend locally
-python run.py
-```
-- **Web App**: `http://localhost:5173`
-- **Backend API**: `http://localhost:8000/docs`

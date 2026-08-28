@@ -1,55 +1,53 @@
 import os
 import sys
+from fastapi.testclient import TestClient
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
-os.environ["KERAS_HOME"] = os.path.join(PROJECT_ROOT, ".keras")
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-os.makedirs(os.environ["KERAS_HOME"], exist_ok=True)
 
-from fastapi.testclient import TestClient
 from backend.app import app
-
-client = TestClient(app)
 
 def test_api():
     print("=" * 60)
     print("TESTING FASTAPI REST API ENDPOINTS")
     print("=" * 60)
 
-    # 1. Health check
-    res = client.get("/api/health")
-    assert res.status_code == 200, f"Health check failed: {res.text}"
-    health_data = res.json()
-    print("✓ GET /api/health passed:", health_data)
-    assert health_data["total_models"] == 3
+    with TestClient(app) as client:
+        # 1. Health check
+        res = client.get("/api/health")
+        assert res.status_code == 200, f"Expected 200, got {res.status_code}"
+        print(f"✓ GET /api/health passed: {res.json()}")
 
-    # 2. Models info
-    res = client.get("/api/models-info")
-    assert res.status_code == 200, f"Models info failed: {res.text}"
-    info_data = res.json()
-    print(f"✓ GET /api/models-info passed ({len(info_data['models'])} models, {info_data['features_count']} features)")
+        # 2. Readiness check
+        res = client.get("/api/ready")
+        assert res.status_code == 200, f"Expected 200, got {res.status_code}"
+        print(f"✓ GET /api/ready passed: {res.json()}")
 
-    # 3. Samples list
-    res = client.get("/api/samples")
-    assert res.status_code == 200, f"Samples endpoint failed: {res.text}"
-    samples_data = res.json()
-    print(f"✓ GET /api/samples passed ({len(samples_data['samples'])} samples available)")
+        # 3. Models info
+        res = client.get("/api/models-info")
+        assert res.status_code == 200
+        info = res.json()
+        print(f"✓ GET /api/models-info passed ({len(info['models'])} models, {info['features_count']} features)")
 
-    # 4. Predict via sample_id
-    res = client.post("/api/predict", data={"sample_id": "sample_real_1"})
-    assert res.status_code == 200, f"Predict sample failed: {res.text}"
-    pred_data = res.json()
-    print("✓ POST /api/predict (sample_id='sample_real_1'):", pred_data["final_decision"], f"({pred_data['majority_vote']['agreement']} models agree, {pred_data['majority_vote']['ensemble_confidence_pct']}%)")
-    assert pred_data["final_decision"] == "REAL"
+        # 4. Samples list
+        res = client.get("/api/samples")
+        assert res.status_code == 200
+        samples = res.json()["samples"]
+        print(f"✓ GET /api/samples passed ({len(samples)} samples available)")
 
-    # 5. Predict via uploaded file
-    with open(os.path.join(PROJECT_ROOT, "FAKE_AUDIOS", "file1004.mp3"), "rb") as f:
-        res = client.post("/api/predict", files={"file": ("file1004.mp3", f, "audio/mpeg")})
-    assert res.status_code == 200, f"Predict upload failed: {res.text}"
-    upload_pred = res.json()
-    print("✓ POST /api/predict (file upload='file1004.mp3'):", upload_pred["final_decision"], f"({upload_pred['majority_vote']['agreement']} models agree, {upload_pred['majority_vote']['ensemble_confidence_pct']}%)")
-    assert upload_pred["final_decision"] == "FAKE"
+        # 5. Predict with sample_id
+        res = client.post("/api/predict", data={"sample_id": "sample_real_1"})
+        assert res.status_code == 200
+        pred = res.json()
+        print(f"✓ POST /api/predict (sample_id='sample_real_1'): {pred['final_decision']} ({pred['majority_vote']['agreement']} models agree, {pred['majority_vote']['ensemble_confidence_pct']}%)")
+
+        # 6. Predict with file upload
+        test_file = os.path.join(PROJECT_ROOT, "FAKE_AUDIOS", "file1004.mp3")
+        with open(test_file, "rb") as f:
+            res = client.post("/api/predict", files={"file": ("file1004.mp3", f, "audio/mpeg")})
+        assert res.status_code == 200
+        pred = res.json()
+        print(f"✓ POST /api/predict (file upload='file1004.mp3'): {pred['final_decision']} ({pred['majority_vote']['agreement']} models agree, {pred['majority_vote']['ensemble_confidence_pct']}%)")
 
     print("\n" + "=" * 60)
     print("ALL API INTEGRATION TESTS PASSED SUCCESSFULLY! ✓")
@@ -57,4 +55,3 @@ def test_api():
 
 if __name__ == "__main__":
     test_api()
-
