@@ -15,14 +15,14 @@ from backend.services.inference import inference_service
 
 def test_inference():
     print("=" * 60)
-    print("TESTING BACKEND ML ENGINE & 3-MODEL ENSEMBLE")
+    print("TESTING BACKEND ML ENGINE & 3-MODEL SEQUENTIAL ENSEMBLE")
     print("=" * 60)
 
     # 1. Initialize models and scaler
     preprocessing_service.initialize()
     inference_service.initialize()
-    assert len(inference_service.models) == 3, f"Expected 3 models, got {len(inference_service.models)}"
-    print("✓ All 3 models loaded into memory successfully.")
+    assert inference_service.is_ready is True, "Expected inference service to be ready"
+    print("✓ All 3 model configurations verified and ready for sequential evaluation.")
 
     # 2. Test test audio files
     test_files = [

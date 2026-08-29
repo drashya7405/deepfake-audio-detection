@@ -1,6 +1,6 @@
 """
 Unit Tests for Deepfake Audio Detection Services
-Tests scaler loading, feature validation, model loading, audio decoding, and rate limiting.
+Tests scaler loading, feature validation, model verification, audio decoding, and rate limiting.
 """
 
 import os
@@ -46,14 +46,11 @@ def test_feature_order_and_validation():
         invalid_with_nan[3] = float("nan")
         preprocessing_service.transform_and_reshape(invalid_with_nan)
 
-def test_model_loading():
-    """Verify that all 3 deep learning models are loaded into memory."""
+def test_model_readiness_verification():
+    """Verify that model files exist and inference service is ready without retaining all models permanently in RAM."""
     inference_service.initialize()
-    assert inference_service.is_loaded is True
-    assert len(inference_service.models) == 3
-    for cfg in MODEL_CONFIGS:
-        assert cfg["id"] in inference_service.models
-        assert inference_service.models[cfg["id"]]["model"] is not None
+    assert inference_service.is_ready is True
+    assert len(inference_service.model_configs) == 3
 
 def test_audio_validation_empty_and_unsupported():
     """Verify audio service rejects empty bytes and invalid extensions."""
@@ -87,4 +84,3 @@ def test_rate_limiter():
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
-

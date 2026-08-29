@@ -1,19 +1,39 @@
 """
-Deepfake Audio Detection - Inference & Ensemble Engine
-Loads the 3 pre-trained deep learning models and computes majority voting consensus.
+Deepfake Audio Detection - Memory-Optimized Sequential Inference Engine
+Evaluates the 3 pre-trained deep learning models sequentially to operate within
+Render Free's 512 MB RAM limit while preserving the full ensemble accuracy.
+
+Render Free has a 512 MB memory limit, so the ensemble is evaluated sequentially to minimize peak RAM usage.
 """
 
 import os
+import sys
+import gc
 import logging
-from typing import Dict, Any, List, Tuple
+import threading
+import resource
+from typing import Dict, Any, List, Optional
 import numpy as np
 
-# Ensure environment is configured before importing tensorflow
 from backend.config import MODELS_DIR, MODEL_CONFIGS
 
 import tensorflow as tf
 
 logger = logging.getLogger("deepfake.inference")
+
+def get_current_memory_mb() -> float:
+    """
+    Returns current maximum resident set size (RAM) in megabytes.
+    Cross-platform support: macOS reports in bytes, Linux (Render) in kilobytes.
+    """
+    try:
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform == "darwin":
+            return usage / (1024.0 * 1024.0)
+        return usage / 1024.0
+    except Exception:
+        return 0.0
+
 
 @tf.keras.utils.register_keras_serializable()
 class PositionalEncoding(tf.keras.layers.Layer):
@@ -49,117 +69,150 @@ class PositionalEncoding(tf.keras.layers.Layer):
 
 
 class InferenceService:
+    """
+    Manages sequential deepfake detection inference.
+    To adhere to Render Free's 512 MB memory ceiling, models are loaded one at a time,
+    evaluated on the feature tensor, and immediately cleared from memory.
+    """
     def __init__(self):
-        self.models: Dict[str, Any] = {}
-        self.is_loaded: bool = False
+        self.model_configs = MODEL_CONFIGS
+        self.is_ready: bool = False
+        # Process-local lock to prevent concurrent requests from loading multiple models simultaneously
+        self._inference_lock = threading.Lock()
 
     def initialize(self):
-        if self.is_loaded:
-            return
-
-        logger.info("Loading 3 Deep Learning models into memory...")
-        loaded_count = 0
-
-        for cfg in MODEL_CONFIGS:
+        """
+        Verifies that all 3 model files exist on disk without permanently retaining all 3 in RAM.
+        """
+        missing_models = []
+        for cfg in self.model_configs:
             model_path = os.path.join(MODELS_DIR, cfg["filename"])
             if not os.path.exists(model_path):
-                logger.error(f"Model file not found: {model_path}")
-                continue
+                missing_models.append(cfg["filename"])
 
-            try:
-                model = tf.keras.models.load_model(
-                    model_path,
-                    compile=False,
-                    custom_objects={'PositionalEncoding': PositionalEncoding}
-                )
-                self.models[cfg["id"]] = {
-                    "model": model,
-                    "info": cfg
-                }
-                loaded_count += 1
-                logger.info(f"✓ Loaded {cfg['name']} from {cfg['filename']}.")
-            except Exception as e:
-                logger.error(f"✗ Failed to load model {cfg['name']} from {model_path}: {e}", exc_info=True)
+        if missing_models:
+            self.is_ready = False
+            logger.error(f"Initialization failed: Missing model files: {missing_models}")
+            raise FileNotFoundError(f"Missing required model files in {MODELS_DIR}: {missing_models}")
 
-        if loaded_count == len(MODEL_CONFIGS):
-            self.is_loaded = True
-            logger.info(f"Ensemble ready: All {loaded_count}/3 models loaded successfully.")
-        else:
-            logger.warning(f"Incomplete ensemble: {loaded_count}/{len(MODEL_CONFIGS)} models loaded.")
+        self.is_ready = True
+        logger.info(
+            f"Inference service initialized: All {len(self.model_configs)} model files verified. "
+            f"Sequential inference mode active (RAM footprint: {get_current_memory_mb():.1f} MB)."
+        )
+
+    def predict_single_model(self, model_cfg: Dict[str, Any], X_input: np.ndarray) -> float:
+        """
+        Loads exactly one Keras model, runs inference on the single sample tensor,
+        extracts the scalar probability, and immediately releases all memory.
+        """
+        model_name = model_cfg["name"]
+        model_path = os.path.join(MODELS_DIR, model_cfg["filename"])
+
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+
+        mem_before = get_current_memory_mb()
+        logger.info(f"Loading model: {model_name} (RAM before load: {mem_before:.1f} MB)")
+
+        model = None
+        pred_tensor = None
+        try:
+            # 1. Load single model without compile overhead
+            model = tf.keras.models.load_model(
+                model_path,
+                compile=False,
+                custom_objects={'PositionalEncoding': PositionalEncoding}
+            )
+
+            # 2. Run inference without batch generator overhead
+            logger.info(f"Running inference: {model_name}")
+            pred_tensor = model(X_input, training=False)
+            
+            # Extract scalar float probability P(REAL)
+            raw_prob = float(np.squeeze(pred_tensor.numpy()))
+            
+            logger.info(f"Completed inference: {model_name} -> P(REAL) = {raw_prob:.4f}")
+            return raw_prob
+
+        except Exception as e:
+            logger.error(f"Inference error in model '{model_name}': {e}", exc_info=True)
+            raise RuntimeError(f"Model evaluation failed for '{model_name}': {str(e)}")
+
+        finally:
+            # 3. Explicit memory cleanup after EACH model
+            # Render Free has a 512 MB memory limit, so the ensemble is evaluated sequentially to minimize peak RAM usage.
+            del model
+            del pred_tensor
+            tf.keras.backend.clear_session()
+            gc.collect()
+
+            mem_after = get_current_memory_mb()
+            logger.info(f"Released model: {model_name} (RAM after release: {mem_after:.1f} MB)")
 
     def predict_ensemble(self, X_input: np.ndarray) -> Dict[str, Any]:
         """
-        Runs feature tensor (shape: 1, 26, 1) through all 3 models and computes majority voting consensus.
+        Sequentially executes all 3 models with memory cleanup between iterations,
+        then calculates the majority voting consensus.
         """
-        if not self.is_loaded or len(self.models) < 3:
+        if not self.is_ready:
             self.initialize()
-            if len(self.models) == 0:
-                raise RuntimeError("No deep learning models could be loaded into memory.")
 
-        model_results = {}
-        probabilities = []
-        votes = []
+        # Enforce single-request model execution to avoid memory spikes under concurrent load
+        with self._inference_lock:
+            model_results = {}
+            probabilities = []
+            votes = []
 
-        model_order = ["drashya", "devesh", "swayam"]
+            for cfg in self.model_configs:
+                m_id = cfg["id"]
+                raw_prob = self.predict_single_model(cfg, X_input)
+                probabilities.append(raw_prob)
 
-        for m_id in model_order:
-            if m_id not in self.models:
-                continue
+                # Binary Classification: 0 = FAKE, 1 = REAL
+                model_vote = "REAL" if raw_prob > 0.5 else "FAKE"
+                votes.append(model_vote)
 
-            item = self.models[m_id]
-            model = item["model"]
-            info = item["info"]
+                confidence_pct = (raw_prob if model_vote == "REAL" else (1.0 - raw_prob)) * 100.0
 
-            # Predict probability scalar
-            raw_pred = float(model.predict(X_input, verbose=0)[0][0])
-            probabilities.append(raw_pred)
+                model_results[m_id] = {
+                    "id": m_id,
+                    "name": cfg["name"],
+                    "architecture": cfg["architecture"],
+                    "prediction": model_vote,
+                    "raw_probability": round(raw_prob, 4),
+                    "real_probability_pct": round(raw_prob * 100, 2),
+                    "fake_probability_pct": round((1.0 - raw_prob) * 100, 2),
+                    "confidence_pct": round(confidence_pct, 2)
+                }
 
-            # Binary Label Encoding: 0 = FAKE, 1 = REAL
-            # raw_pred represents P(REAL)
-            model_vote = "REAL" if raw_pred > 0.5 else "FAKE"
-            votes.append(model_vote)
+            # Majority voting calculation
+            real_votes_count = votes.count("REAL")
+            fake_votes_count = votes.count("FAKE")
+            total_votes = len(votes)
 
-            confidence_pct = (raw_pred if model_vote == "REAL" else (1.0 - raw_pred)) * 100.0
+            final_decision = "REAL" if real_votes_count >= 2 else "FAKE"
+            majority_count = max(real_votes_count, fake_votes_count)
+            agreement_str = f"{majority_count}/{total_votes}"
 
-            model_results[m_id] = {
-                "id": m_id,
-                "name": info["name"],
-                "architecture": info["architecture"],
-                "prediction": model_vote,
-                "raw_probability": round(raw_pred, 4),
-                "real_probability_pct": round(raw_pred * 100, 2),
-                "fake_probability_pct": round((1.0 - raw_pred) * 100, 2),
-                "confidence_pct": round(confidence_pct, 2)
+            avg_real_prob = float(np.mean(probabilities)) if probabilities else 0.5
+            ensemble_confidence_pct = (avg_real_prob if final_decision == "REAL" else (1.0 - avg_real_prob)) * 100.0
+
+            return {
+                "final_decision": final_decision,
+                "is_fake": final_decision == "FAKE",
+                "is_real": final_decision == "REAL",
+                "majority_vote": {
+                    "decision": final_decision,
+                    "agreement": agreement_str,
+                    "real_votes": real_votes_count,
+                    "fake_votes": fake_votes_count,
+                    "total_models": total_votes,
+                    "avg_real_probability": round(avg_real_prob, 4),
+                    "ensemble_confidence_pct": round(ensemble_confidence_pct, 2)
+                },
+                "models": model_results
             }
-
-        # Majority voting calculation
-        real_votes_count = votes.count("REAL")
-        fake_votes_count = votes.count("FAKE")
-        total_votes = len(votes)
-
-        final_decision = "REAL" if real_votes_count >= 2 else "FAKE"
-        majority_count = max(real_votes_count, fake_votes_count)
-        agreement_str = f"{majority_count}/{total_votes}"
-
-        avg_real_prob = float(np.mean(probabilities)) if probabilities else 0.5
-        ensemble_confidence_pct = (avg_real_prob if final_decision == "REAL" else (1.0 - avg_real_prob)) * 100.0
-
-        return {
-            "final_decision": final_decision,
-            "is_fake": final_decision == "FAKE",
-            "is_real": final_decision == "REAL",
-            "majority_vote": {
-                "decision": final_decision,
-                "agreement": agreement_str,
-                "real_votes": real_votes_count,
-                "fake_votes": fake_votes_count,
-                "total_models": total_votes,
-                "avg_real_probability": round(avg_real_prob, 4),
-                "ensemble_confidence_pct": round(ensemble_confidence_pct, 2)
-            },
-            "models": model_results
-        }
 
 
 inference_service = InferenceService()
-

@@ -1,9 +1,11 @@
 """
 Deepfake Audio Detection - Audio Processing & Feature Extraction Service
-Handles audio validation, format decoding, and Librosa acoustic feature extraction.
+Handles audio validation, format decoding, Librosa acoustic feature extraction,
+and proactive memory cleanup for 512 MB constrained environments.
 """
 
 import os
+import gc
 import time
 import uuid
 import tempfile
@@ -59,12 +61,15 @@ class AudioProcessingService:
         """
         Ingests raw audio bytes, converts to mono PCM, validates duration,
         and computes the 26 acoustic features.
-        Guarantees cleanup of all temporary files.
+        Guarantees cleanup of all temporary files and in-memory arrays.
         """
         ext = self.validate_upload(audio_bytes, original_filename)
 
         temp_in_path = None
         temp_wav_path = None
+        y = None
+        sr = None
+        mfccs = None
 
         try:
             # 1. Write incoming bytes to secure temporary file
@@ -73,8 +78,6 @@ class AudioProcessingService:
                 temp_in_path = f_in.name
 
             # 2. Decode audio waveform
-            y = None
-            sr = None
             duration = 0.0
 
             try:
@@ -90,6 +93,7 @@ class AudioProcessingService:
                 audio_seg = AudioSegment.from_file(temp_in_path)
                 audio_seg = audio_seg.set_channels(1)  # Force mono
                 audio_seg.export(temp_wav_path, format="wav")
+                del audio_seg
 
                 y, sr = librosa.load(temp_wav_path, sr=None, mono=True)
                 duration = float(librosa.get_duration(y=y, sr=sr))
@@ -148,7 +152,12 @@ class AudioProcessingService:
             raise HTTPException(status_code=422, detail=f"Audio processing error: Failed to decode audio file. ({str(e)})")
 
         finally:
-            # Guaranteed cleanup of all temp files
+            # Guaranteed cleanup of all temp files & memory structures
+            del y
+            del sr
+            del mfccs
+            gc.collect()
+
             for temp_f in [temp_in_path, temp_wav_path]:
                 if temp_f and os.path.exists(temp_f):
                     try:
@@ -158,4 +167,3 @@ class AudioProcessingService:
 
 
 audio_service = AudioProcessingService()
-

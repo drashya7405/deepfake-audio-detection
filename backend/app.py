@@ -1,6 +1,7 @@
 """
 Deepfake Audio Detection - FastAPI Production Server
 Exposes secure REST endpoints for audio feature extraction, multi-model ensemble inference, and health monitoring.
+Optimized for 512 MB memory-constrained hosting environments (Render Free).
 """
 
 import os
@@ -25,7 +26,7 @@ from backend.config import (
 )
 from backend.services.rate_limiter import InMemoryRateLimiter
 from backend.services.preprocessing import preprocessing_service
-from backend.services.inference import inference_service
+from backend.services.inference import inference_service, get_current_memory_mb
 from backend.services.audio import audio_service
 
 # --- 1. Structured Logging Setup ---
@@ -43,11 +44,13 @@ rate_limiter = InMemoryRateLimiter(requests_per_minute=RATE_LIMIT_PER_MINUTE)
 # --- 2. Application Lifespan Handler ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Initializing Deepfake Audio Detection Backend...")
+    logger.info("Initializing Deepfake Audio Detection Backend (Sequential Inference Mode)...")
     try:
         preprocessing_service.initialize()
         inference_service.initialize()
-        logger.info("Backend services initialized and ready to accept requests.")
+        logger.info(
+            f"Backend services initialized and ready. Current RAM usage: {get_current_memory_mb():.1f} MB."
+        )
     except Exception as e:
         logger.error(f"Startup initialization failed: {e}", exc_info=True)
     yield
@@ -56,7 +59,7 @@ async def lifespan(app: FastAPI):
 # --- 3. FastAPI App Initialization ---
 app = FastAPI(
     title="Deepfake Audio Detection API",
-    description="Production-grade AI Audio Forensics & Ensemble Inference API",
+    description="Production-grade AI Audio Forensics & Sequential Ensemble Inference API",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -86,30 +89,30 @@ async def health_check():
 @app.get("/api/ready", tags=["Monitoring"])
 async def readiness_check():
     """
-    Readiness probe: Verifies that the scaler and all 3 ML models are loaded in memory.
-    Returns HTTP 200 when ready for traffic, HTTP 503 if still initializing or failed.
+    Readiness probe: Verifies that the scaler is loaded and all 3 model files exist.
+    Optimized for Render Free (512 MB RAM): does not require all 3 models to remain loaded in memory.
     """
     is_scaler_ready = preprocessing_service.is_loaded and preprocessing_service.scaler is not None
-    loaded_models = len(inference_service.models)
-    is_inference_ready = inference_service.is_loaded and loaded_models == len(MODEL_CONFIGS)
+    is_inference_ready = inference_service.is_ready
 
     if is_scaler_ready and is_inference_ready:
         return {
             "status": "ready",
-            "models_loaded": loaded_models,
+            "models_available": len(MODEL_CONFIGS),
             "required_models": len(MODEL_CONFIGS),
-            "scaler_loaded": True
+            "scaler_loaded": True,
+            "mode": "sequential_inference"
         }
 
-    logger.warning(f"Readiness check failed (scaler_ready={is_scaler_ready}, loaded_models={loaded_models})")
+    logger.warning(f"Readiness check failed (scaler_ready={is_scaler_ready}, inference_ready={is_inference_ready})")
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={
             "status": "not_ready",
-            "models_loaded": loaded_models,
+            "models_available": len(MODEL_CONFIGS) if is_inference_ready else 0,
             "required_models": len(MODEL_CONFIGS),
             "scaler_loaded": is_scaler_ready,
-            "message": "Inference engine is still initializing or models are missing."
+            "message": "Inference engine is still initializing or required model files are missing."
         }
     )
 
@@ -123,7 +126,7 @@ async def get_models_info():
         "models": MODEL_CONFIGS,
         "features_count": len(FEATURE_COLUMNS),
         "features_list": FEATURE_COLUMNS,
-        "ensemble_method": "Majority Voting (>=2 of 3) with Soft-Probability Calibration"
+        "ensemble_method": "Sequential Majority Voting (>=2 of 3) with Soft-Probability Calibration"
     }
 
 
@@ -175,20 +178,20 @@ async def predict_audio(
     sample_id: Optional[str] = Form(None)
 ):
     """
-    Production Deepfake Audio Prediction Pipeline:
+    Production Deepfake Audio Prediction Pipeline (Memory-Optimized):
     1. Enforces rate limits.
     2. Ingests and safely decodes audio stream.
-    3. Extracts 26 acoustic features via Librosa.
+    3. Extracts 26 acoustic features via Librosa with prompt buffer release.
     4. Normalizes features with pre-computed StandardScaler.
-    5. Runs feature tensor through 3 deep learning models.
+    5. Evaluates the 3 deep learning models sequentially (one-by-one with session clearing).
     6. Calculates majority voting consensus and ensemble confidence.
     """
     # 1. Rate limiting check
     rate_limiter.check_rate_limit(request)
 
     # 2. Check service readiness
-    if not preprocessing_service.is_loaded or not inference_service.is_loaded:
-        logger.warning("Inference requested before services were fully initialized. Attempting initialization...")
+    if not preprocessing_service.is_loaded or not inference_service.is_ready:
+        logger.warning("Inference requested before services were fully ready. Attempting initialization...")
         try:
             preprocessing_service.initialize()
             inference_service.initialize()
@@ -232,7 +235,8 @@ async def predict_audio(
     # 4. Feature Scaling & Tensor Preparation
     X_input = preprocessing_service.transform_and_reshape(feature_values)
 
-    # 5. 3-Model Inference & Majority Voting
+    # 5. Sequential 3-Model Inference & Majority Voting
+    # Render Free has a 512 MB memory limit, so the ensemble is evaluated sequentially to minimize peak RAM usage.
     ensemble_results = inference_service.predict_ensemble(X_input)
 
     total_processing_ms = round((time.time() - start_time) * 1000, 1)
@@ -240,7 +244,7 @@ async def predict_audio(
     logger.info(
         f"Analysis complete for '{filename}': Verdict={ensemble_results['final_decision']} "
         f"({ensemble_results['majority_vote']['agreement']} models, {ensemble_results['majority_vote']['ensemble_confidence_pct']}%) "
-        f"in {total_processing_ms} ms"
+        f"in {total_processing_ms} ms (RAM: {get_current_memory_mb():.1f} MB)"
     )
 
     return {

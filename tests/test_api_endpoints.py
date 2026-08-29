@@ -29,12 +29,12 @@ def test_health_endpoint(client):
     assert data["service"] == "deepfake-audio-detector"
 
 def test_readiness_endpoint(client):
-    """Verify GET /api/ready returns 200 and models_loaded=3."""
+    """Verify GET /api/ready returns 200 and models_available=3."""
     res = client.get("/api/ready")
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "ready"
-    assert data["models_loaded"] == 3
+    assert data.get("models_available", data.get("models_loaded")) == 3
     assert data["scaler_loaded"] is True
 
 def test_models_info_endpoint(client):
@@ -55,7 +55,7 @@ def test_samples_endpoint(client):
     assert len(data["samples"]) > 0
 
 def test_predict_with_sample_id(client):
-    """Verify POST /api/predict correctly analyzes a sample ID."""
+    """Verify POST /api/predict correctly analyzes a sample ID with sequential inference."""
     res = client.post("/api/predict", data={"sample_id": "sample_real_1"})
     assert res.status_code == 200
     data = res.json()
@@ -79,4 +79,3 @@ def test_predict_without_payload(client):
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])
-
