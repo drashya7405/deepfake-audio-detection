@@ -34,7 +34,12 @@ export default function ResultsDashboard({
 
   const isFake = result.final_decision === 'FAKE';
   const confidencePct = result.majority_vote?.ensemble_confidence_pct ?? 0;
-  const avgRealProb = result.majority_vote?.avg_real_probability ?? 0.5;
+  
+  // Robust derivation of Real and Fake percentages
+  const avgRealProb = result.majority_vote?.avg_real_probability 
+    ?? (result.models && Object.keys(result.models).length > 0
+        ? Object.values(result.models).reduce((acc, m) => acc + (m.raw_probability ?? (m.prediction === 'REAL' ? m.confidence_pct / 100 : (100 - m.confidence_pct) / 100)), 0) / Object.keys(result.models).length
+        : (isFake ? (100 - confidencePct) / 100 : confidencePct / 100));
   const realPct = (avgRealProb * 100).toFixed(1);
   const fakePct = ((1 - avgRealProb) * 100).toFixed(1);
 
@@ -373,8 +378,8 @@ export default function ResultsDashboard({
                 </div>
 
                 <div className="flex justify-between text-[10px] font-mono text-slate-400 pt-0.5">
-                  <span>P(Real): {model.real_probability_pct}%</span>
-                  <span>P(Fake): {model.fake_probability_pct}%</span>
+                  <span>P(Real): {model.real_probability_pct ?? (model.raw_probability != null ? (model.raw_probability * 100).toFixed(2) : (model.prediction === 'REAL' ? model.confidence_pct : (100 - model.confidence_pct).toFixed(2)))}%</span>
+                  <span>P(Fake): {model.fake_probability_pct ?? (model.raw_probability != null ? ((1 - model.raw_probability) * 100).toFixed(2) : (model.prediction === 'FAKE' ? model.confidence_pct : (100 - model.confidence_pct).toFixed(2)))}%</span>
                 </div>
               </div>
             );

@@ -391,11 +391,16 @@ class InferenceService:
                 probabilities.append(raw_prob)
                 votes.append(prediction)
 
+                raw_real_pct = round(raw_prob * 100.0, 2)
+                raw_fake_pct = round((1.0 - raw_prob) * 100.0, 2)
+
                 model_results[model_id] = {
                     "name": cfg["name"],
                     "architecture": cfg["architecture"],
                     "test_split_accuracy": cfg["test_split_accuracy"],
                     "raw_probability": round(raw_prob, 4),
+                    "real_probability_pct": raw_real_pct,
+                    "fake_probability_pct": raw_fake_pct,
                     "confidence_pct": round(confidence_pct, 2),
                     "prediction": prediction
                 }
@@ -404,16 +409,19 @@ class InferenceService:
         real_votes = votes.count("REAL")
         fake_votes = votes.count("FAKE")
 
+        avg_real_prob = float(np.mean(probabilities))
+        avg_fake_prob = 1.0 - avg_real_prob
+
         if real_votes >= 2:
             final_decision = "REAL"
             agreement_count = real_votes
             # Soft ensemble confidence: average P(REAL)
-            ensemble_confidence = float(np.mean(probabilities)) * 100.0
+            ensemble_confidence = avg_real_prob * 100.0
         else:
             final_decision = "FAKE"
             agreement_count = fake_votes
             # Soft ensemble confidence: average P(FAKE) = 1 - P(REAL)
-            ensemble_confidence = float(np.mean([1.0 - p for p in probabilities])) * 100.0
+            ensemble_confidence = avg_fake_prob * 100.0
 
         rss_end = get_live_rss_mb()
         logger.info(f"[{req_tag}] RSS | Complete prediction end: {rss_end:.2f} MB")
@@ -428,7 +436,9 @@ class InferenceService:
                 "fake_votes": fake_votes,
                 "total_models": len(self.model_configs),
                 "agreement": f"{agreement_count}/{len(self.model_configs)}",
-                "ensemble_confidence_pct": round(ensemble_confidence, 2)
+                "ensemble_confidence_pct": round(ensemble_confidence, 2),
+                "avg_real_probability": round(avg_real_prob, 4),
+                "avg_fake_probability": round(avg_fake_prob, 4)
             },
             "models": model_results
         }
