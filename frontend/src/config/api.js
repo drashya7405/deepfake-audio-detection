@@ -4,7 +4,13 @@
  * timeout controls, and unified error parsing.
  */
 
-export const API_BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+const rawApiUrl = import.meta.env.VITE_API_URL;
+
+if (!rawApiUrl && import.meta.env.DEV) {
+  console.warn('[API Config] VITE_API_URL is not configured. Using local / relative API routes.');
+}
+
+export const API_BASE_URL = (rawApiUrl || '').replace(/\/+$/, '');
 
 const DEFAULT_TIMEOUT_MS = 45000;
 
@@ -64,6 +70,8 @@ export async function submitPrediction(audioFile, sampleId) {
     throw new Error('No audio file or sample provided for prediction.');
   }
 
+  // Note: Do NOT manually set Content-Type header when body is FormData;
+  // the browser automatically sets the multipart/form-data boundary.
   const res = await fetchWithTimeout('/api/predict', {
     method: 'POST',
     body: formData,
@@ -90,4 +98,3 @@ export async function submitPrediction(audioFile, sampleId) {
 
   return res.json();
 }
-

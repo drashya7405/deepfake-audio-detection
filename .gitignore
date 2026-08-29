@@ -45,6 +45,13 @@ venv.bak/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.*.local
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+frontend/.env.*.local
 
 # ML / Framework Caches
 .keras/
