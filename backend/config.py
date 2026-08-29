@@ -1,6 +1,7 @@
 """
 Deepfake Audio Detection - Backend Configuration
 Centralizes all environment variables, feature column definitions, and file paths.
+Optimized for 512 MB memory-constrained hosting environments (Render Free).
 """
 
 import os
@@ -17,10 +18,18 @@ FALLBACK_SCALER_PATH = os.path.join(MODELS_DIR, "scaler.pkl")
 DATASET_PATH = os.path.join(PROJECT_ROOT, "DATASET-balanced.csv")
 SAMPLE_AUDIOS_DIR = PROJECT_ROOT
 
+# Low-memory environment flags for 512 MB hosts (Render Free)
+# Disables oneDNN huge memory arena pre-allocations and forces single-thread CPU execution
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["TF_NUM_INTRAOP_THREADS"] = "1"
+os.environ["TF_NUM_INTEROP_THREADS"] = "1"
+
 # Ensure KERAS_HOME stays within the project to prevent sandbox/permission errors
 KERAS_HOME = os.environ.get("KERAS_HOME", os.path.join(PROJECT_ROOT, ".keras"))
 os.environ["KERAS_HOME"] = KERAS_HOME
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 os.makedirs(KERAS_HOME, exist_ok=True)
 
 # --- Server & Environment Configurations ---
@@ -28,7 +37,7 @@ PORT = int(os.environ.get("PORT", 8000))
 HOST = os.environ.get("HOST", "0.0.0.0")
 
 # CORS: Configurable frontend origin(s)
-FRONTEND_URL_RAW = os.environ.get("FRONTEND_URL", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173")
+FRONTEND_URL_RAW = os.environ.get("FRONTEND_URL", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,https://deepfake-audio-detection-rust.vercel.app")
 ALLOWED_ORIGINS = [url.strip() for url in FRONTEND_URL_RAW.split(",") if url.strip()]
 
 # Logging level
@@ -63,6 +72,7 @@ MODEL_CONFIGS = [
         "id": "drashya",
         "name": "Drashya Model (CNN-RNN Hybrid)",
         "filename": "drashya_best_deepfake_audio_model.h5",
+        "tflite_filename": "drashya_best_deepfake_audio_model.tflite",
         "architecture": "1D CNN + Recurrent Neural Network (LSTM/GRU)",
         "test_split_accuracy": "98.59% (on project test split)"
     },
@@ -70,6 +80,7 @@ MODEL_CONFIGS = [
         "id": "devesh",
         "name": "Devesh Model (Deep CNN Architecture)",
         "filename": "devesh_best_deepfake_audio_model.h5",
+        "tflite_filename": "devesh_best_deepfake_audio_model.tflite",
         "architecture": "Deep 1D CNN with Batch Normalization & Dropout",
         "test_split_accuracy": "95.80% (on project test split)"
     },
@@ -77,6 +88,7 @@ MODEL_CONFIGS = [
         "id": "swayam",
         "name": "Swayam Model (CNN-Transformer)",
         "filename": "swayam_best_deepfake_audio_model.h5",
+        "tflite_filename": "swayam_best_deepfake_audio_model.tflite",
         "architecture": "1D CNN + Multi-Head Self-Attention with Positional Encoding",
         "test_split_accuracy": "97.40% (on project test split)"
     }
@@ -113,4 +125,3 @@ KNOWN_SAMPLES = [
         "type": "WAV Audio"
     }
 ]
-

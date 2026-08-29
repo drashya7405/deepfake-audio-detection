@@ -12,9 +12,12 @@ if (!rawApiUrl && import.meta.env.DEV) {
 
 export const API_BASE_URL = (rawApiUrl || '').replace(/\/+$/, '');
 
-// 120 seconds (120,000 ms) timeout to accommodate Render Free cold-start & sequential inference
+// 120 seconds (120,000 ms) prediction timeout for Render Free sequential inference
 const DEFAULT_TIMEOUT_MS = 120000;
-const HEALTH_TIMEOUT_MS = 30000;
+
+// Dedicated readiness timeout (90,000 ms) giving Render Free sufficient headroom to wake without premature 30s client aborts
+export const READINESS_TIMEOUT_MS = 90000;
+const SAMPLES_TIMEOUT_MS = 30000;
 
 export async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -37,14 +40,14 @@ export async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TI
   }
 }
 
-export async function checkBackendHealth() {
-  const res = await fetchWithTimeout('/api/health', {}, HEALTH_TIMEOUT_MS);
+export async function checkBackendHealth(timeoutMs = 15000) {
+  const res = await fetchWithTimeout('/api/health', {}, timeoutMs);
   if (!res.ok) throw new Error('Backend health check failed');
   return res.json();
 }
 
-export async function checkBackendReady() {
-  const res = await fetchWithTimeout('/api/ready', {}, HEALTH_TIMEOUT_MS);
+export async function checkBackendReady(timeoutMs = READINESS_TIMEOUT_MS) {
+  const res = await fetchWithTimeout('/api/ready', {}, timeoutMs);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail?.message || 'Inference engine not ready yet.');
@@ -53,7 +56,7 @@ export async function checkBackendReady() {
 }
 
 export async function fetchSamplesList() {
-  const res = await fetchWithTimeout('/api/samples', {}, HEALTH_TIMEOUT_MS);
+  const res = await fetchWithTimeout('/api/samples', {}, SAMPLES_TIMEOUT_MS);
   if (!res.ok) throw new Error('Failed to load sample audio files.');
   return res.json();
 }

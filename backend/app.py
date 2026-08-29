@@ -7,6 +7,7 @@ Optimized for 512 MB memory-constrained hosting environments (Render Free).
 import os
 import sys
 import time
+import uuid
 import logging
 from typing import Optional
 from contextlib import asynccontextmanager
@@ -49,7 +50,8 @@ async def lifespan(app: FastAPI):
         preprocessing_service.initialize()
         inference_service.initialize()
         logger.info(
-            f"Backend services initialized and ready. Current RAM usage: {get_current_memory_mb():.1f} MB."
+            f"RSS | Backend services initialized and ready. Current Live RSS: {get_current_memory_mb():.2f} MB "
+            f"(TensorFlow in sys.modules: {'tensorflow' in sys.modules})."
         )
     except Exception as e:
         logger.error(f"Startup initialization failed: {e}", exc_info=True)
@@ -186,17 +188,19 @@ async def predict_audio(
     5. Evaluates the 3 deep learning models sequentially (one-by-one with session clearing).
     6. Calculates majority voting consensus and ensemble confidence.
     """
+    req_id = uuid.uuid4().hex[:8]
+
     # 1. Rate limiting check
     rate_limiter.check_rate_limit(request)
 
     # 2. Check service readiness
     if not preprocessing_service.is_loaded or not inference_service.is_ready:
-        logger.warning("Inference requested before services were fully ready. Attempting initialization...")
+        logger.warning(f"[Req {req_id}] Inference requested before services were fully ready. Attempting initialization...")
         try:
             preprocessing_service.initialize()
             inference_service.initialize()
         except Exception as err:
-            logger.error(f"Inference blocked - service initialization failed: {err}")
+            logger.error(f"[Req {req_id}] Inference blocked - service initialization failed: {err}")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Inference models are currently unavailable. Please try again shortly."
@@ -227,7 +231,7 @@ async def predict_audio(
     if not audio_bytes or len(audio_bytes) == 0:
         raise HTTPException(status_code=400, detail="No audio file or valid sample provided.")
 
-    logger.info(f"Received audio analysis request for '{filename}' ({len(audio_bytes)/1024:.1f} KB)")
+    logger.info(f"[Req {req_id}] Received audio analysis request for '{filename}' ({len(audio_bytes)/1024:.1f} KB)")
 
     # 3. Audio Decoding & 26-Feature Extraction
     feature_values, feature_dict, audio_info = audio_service.process_and_extract_features(audio_bytes, filename)
@@ -237,14 +241,14 @@ async def predict_audio(
 
     # 5. Sequential 3-Model Inference & Majority Voting
     # Render Free has a 512 MB memory limit, so the ensemble is evaluated sequentially to minimize peak RAM usage.
-    ensemble_results = inference_service.predict_ensemble(X_input)
+    ensemble_results = inference_service.predict_ensemble(X_input, request_id=req_id)
 
     total_processing_ms = round((time.time() - start_time) * 1000, 1)
 
     logger.info(
-        f"Analysis complete for '{filename}': Verdict={ensemble_results['final_decision']} "
+        f"[Req {req_id}] Analysis complete for '{filename}': Verdict={ensemble_results['final_decision']} "
         f"({ensemble_results['majority_vote']['agreement']} models, {ensemble_results['majority_vote']['ensemble_confidence_pct']}%) "
-        f"in {total_processing_ms} ms (RAM: {get_current_memory_mb():.1f} MB)"
+        f"in {total_processing_ms} ms (Final Live RSS: {get_current_memory_mb():.2f} MB)"
     )
 
     return {

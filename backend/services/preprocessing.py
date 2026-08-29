@@ -1,13 +1,13 @@
 """
 Deepfake Audio Detection - Preprocessing & Feature Normalization Service
 Manages StandardScaler loading and feature tensor preparation.
+Optimized to avoid heavy Pandas allocations during standard inference.
 """
 
 import os
 import logging
 from typing import List, Dict, Any, Tuple
 import numpy as np
-import pandas as pd
 import joblib
 from sklearn.preprocessing import StandardScaler
 
@@ -43,6 +43,7 @@ class PreprocessingService:
 
         # 2. Fallback: Fit on DATASET-balanced.csv if available
         if os.path.exists(DATASET_PATH):
+            import pandas as pd
             logger.info(f"Fitting StandardScaler from training dataset at {DATASET_PATH}...")
             df = pd.read_csv(DATASET_PATH)
             self.scaler = StandardScaler()
@@ -78,9 +79,9 @@ class PreprocessingService:
 
         self.validate_features(feature_values)
 
-        # Convert to DataFrame with feature names to match scaler training schema cleanly
-        raw_df = pd.DataFrame([feature_values], columns=FEATURE_COLUMNS, dtype=np.float64)
-        scaled_features = self.scaler.transform(raw_df)
+        # Transform using 2D NumPy array (avoids heavy DataFrame overhead during inference)
+        raw_arr = np.array([feature_values], dtype=np.float64)
+        scaled_features = self.scaler.transform(raw_arr)
 
         # Reshape to sequence: shape (1, 26, 1) for 1D CNN / RNN sequence layers
         reshaped_tensor = np.reshape(scaled_features, (1, len(FEATURE_COLUMNS), 1))
@@ -88,4 +89,3 @@ class PreprocessingService:
 
 
 preprocessing_service = PreprocessingService()
-

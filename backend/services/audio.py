@@ -2,6 +2,7 @@
 Deepfake Audio Detection - Audio Processing & Feature Extraction Service
 Handles audio validation, format decoding, Librosa acoustic feature extraction,
 and proactive memory cleanup for 512 MB constrained environments.
+Reuses single-pass STFT spectrograms to eliminate redundant memory allocations.
 """
 
 import os
@@ -61,6 +62,7 @@ class AudioProcessingService:
         """
         Ingests raw audio bytes, converts to mono PCM, validates duration,
         and computes the 26 acoustic features.
+        Uses single-pass STFT calculation to prevent 4 redundant multi-megabyte FFT allocations.
         Guarantees cleanup of all temporary files and in-memory arrays.
         """
         ext = self.validate_upload(audio_bytes, original_filename)
@@ -69,6 +71,9 @@ class AudioProcessingService:
         temp_wav_path = None
         y = None
         sr = None
+        S = None
+        S_power = None
+        melspec = None
         mfccs = None
 
         try:
@@ -112,20 +117,31 @@ class AudioProcessingService:
                 )
 
             # 4. Extract the exact 26 Acoustic Features in strict sequence
-            # (1) Chroma STFT
-            chroma_stft = float(np.mean(librosa.feature.chroma_stft(y=y, sr=sr)))
-            # (2) RMS Energy
+            # Single-pass STFT calculation eliminates 4 redundant Fourier transforms and multi-spectrogram RAM allocations
+            S = np.abs(librosa.stft(y=y))
+            S_power = S ** 2
+
+            # (1) Chroma STFT (computed from power spectrogram)
+            chroma_stft = float(np.mean(librosa.feature.chroma_stft(S=S_power, sr=sr)))
+
+            # (2) RMS Energy (computed from waveform)
             rms = float(np.mean(librosa.feature.rms(y=y)))
-            # (3) Spectral Centroid
-            spectral_centroid = float(np.mean(librosa.feature.spectral_centroid(y=y, sr=sr)))
-            # (4) Spectral Bandwidth
-            spectral_bandwidth = float(np.mean(librosa.feature.spectral_bandwidth(y=y, sr=sr)))
-            # (5) Spectral Rolloff
-            rolloff = float(np.mean(librosa.feature.spectral_rolloff(y=y, sr=sr)))
-            # (6) Zero Crossing Rate
+
+            # (3) Spectral Centroid (computed from magnitude spectrogram)
+            spectral_centroid = float(np.mean(librosa.feature.spectral_centroid(S=S, sr=sr)))
+
+            # (4) Spectral Bandwidth (computed from magnitude spectrogram)
+            spectral_bandwidth = float(np.mean(librosa.feature.spectral_bandwidth(S=S, sr=sr)))
+
+            # (5) Spectral Rolloff (computed from magnitude spectrogram)
+            rolloff = float(np.mean(librosa.feature.spectral_rolloff(S=S, sr=sr)))
+
+            # (6) Zero Crossing Rate (computed from waveform)
             zero_crossing_rate = float(np.mean(librosa.feature.zero_crossing_rate(y)))
-            # (7-26) 20 MFCCs
-            mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+
+            # (7-26) 20 MFCCs (computed from Mel-spectrogram of power spectrogram)
+            melspec = librosa.feature.melspectrogram(S=S_power, sr=sr)
+            mfccs = librosa.feature.mfcc(S=librosa.power_to_db(melspec), sr=sr, n_mfcc=20)
             mfcc_means = [float(x) for x in np.mean(mfccs, axis=1)]
 
             feature_values = [
@@ -155,6 +171,9 @@ class AudioProcessingService:
             # Guaranteed cleanup of all temp files & memory structures
             del y
             del sr
+            del S
+            del S_power
+            del melspec
             del mfccs
             gc.collect()
 

@@ -14,7 +14,6 @@ import {
   fetchSamplesList,
   getSampleAudioStreamUrl,
   submitPrediction,
-  checkBackendHealth,
   checkBackendReady
 } from './config/api';
 
@@ -45,15 +44,14 @@ export default function App() {
     setError(null);
 
     const STARTUP_TIMEOUT_MS = 90000; // 90 seconds max wait for Render Free cold start
-    const POLL_INTERVAL_MS = 3000;    // Poll every 3 seconds
+    const POLL_INTERVAL_MS = 3000;    // Poll every 3 seconds after failure/network error
     const startTime = Date.now();
 
     const checkStatus = async () => {
       if (!isMountedRef.current) return;
 
       try {
-        // Probe health first, then readiness
-        await checkBackendHealth();
+        // Direct readiness probe (wakes Render Free and verifies model assets in one call)
         const readyData = await checkBackendReady();
 
         if (readyData && isMountedRef.current) {
@@ -73,12 +71,12 @@ export default function App() {
           return;
         }
 
-        // Schedule next poll in 3 seconds
+        // Schedule next poll in 3 seconds (guarantees no overlapping requests)
         pollTimerRef.current = setTimeout(checkStatus, POLL_INTERVAL_MS);
       }
     };
 
-    // Begin first check immediately
+    // Begin first readiness check immediately
     checkStatus();
 
     return () => {
